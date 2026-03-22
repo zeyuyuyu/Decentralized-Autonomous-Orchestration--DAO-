@@ -1,52 +1,41 @@
 import os
-import subprocess
 import time
-import logging
-import yaml
-
-logger = logging.getLogger(__name__)
+import random
+import multiprocessing as mp
 
 class DAOOrchestrator:
-    def __init__(self, config_file='config.yaml'):
-        with open(config_file, 'r') as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, num_workers=4):
+        self.num_workers = num_workers
+        self.worker_pool = mp.Pool(processes=self.num_workers)
+        self.tasks = []
 
-        self.cluster_size = self.config['cluster_size']
-        self.image_name = self.config['image_name']
-        self.container_port = self.config['container_port']
+    def add_task(self, task):
+        self.tasks.append(task)
 
-    def deploy_containers(self):
-        logger.info('Deploying containers...')
-        for i in range(self.cluster_size):
-            container_name = f'dao-node-{i+1}'
-            subprocess.run(['docker', 'run', '-d', '--name', container_name, '-p', f'{self.container_port+i}:8080', self.image_name], check=True)
-            logger.info(f'Container {container_name} deployed')
+    def run(self):
+        results = self.worker_pool.map(self.execute_task, self.tasks)
+        return results
 
-    def scale_cluster(self, new_size):
-        logger.info(f'Scaling cluster to {new_size} nodes...')
-        current_size = self.cluster_size
-        if new_size > current_size:
-            for i in range(current_size, new_size):
-                container_name = f'dao-node-{i+1}'
-                subprocess.run(['docker', 'run', '-d', '--name', container_name, '-p', f'{self.container_port+i}:8080', self.image_name], check=True)
-                logger.info(f'Container {container_name} deployed')
-        elif new_size < current_size:
-            for i in range(new_size, current_size):
-                container_name = f'dao-node-{i+1}'
-                subprocess.run(['docker', 'stop', container_name], check=True)
-                subprocess.run(['docker', 'rm', container_name], check=True)
-                logger.info(f'Container {container_name} removed')
-        self.cluster_size = new_size
+    def execute_task(self, task):
+        # Simulate task execution
+        time.sleep(random.uniform(1, 5))
+        return task.execute()
 
-    def monitor_and_scale(self):
-        while True:
-            # Monitoring logic here
-            time.sleep(60)
-            # Scaling logic here
-            self.scale_cluster(self.cluster_size + 1)
+class Task:
+    def __init__(self, name, command):
+        self.name = name
+        self.command = command
+
+    def execute(self):
+        print(f'Executing task: {self.name}')
+        os.system(self.command)
+        return f'Completed task: {self.name}'
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    orchestrator = DAOOrchestrator()
-    orchestrator.deploy_containers()
-    orchestrator.monitor_and_scale()
+    # Example usage
+    orchestrator = DAOOrchestrator(num_workers=4)
+    orchestrator.add_task(Task('Task 1', 'echo "Hello, World!"'))
+    orchestrator.add_task(Task('Task 2', 'sleep 3 && echo "Delayed task"'))
+    orchestrator.add_task(Task('Task 3', 'echo "Another task"'))
+    results = orchestrator.run()
+    print(results)
