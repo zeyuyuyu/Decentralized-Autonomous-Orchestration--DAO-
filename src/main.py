@@ -1,60 +1,52 @@
 import os
-import asyncio
-import multiprocessing as mp
-from typing import List, Tuple
+import subprocess
+import time
+import logging
+import yaml
 
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
+logger = logging.getLogger(__name__)
 
-class SecureMultiPartyComputation:
-    def __init__(self, num_parties: int, threshold: int):
-        self.num_parties = num_parties
-        self.threshold = threshold
-        self.private_keys = [rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend()
-        ) for _ in range(num_parties)]
-        self.public_keys = [key.public_key() for key in self.private_keys]
+class DAOOrchestrator:
+    def __init__(self, config_file='config.yaml'):
+        with open(config_file, 'r') as f:
+            self.config = yaml.safe_load(f)
 
-    async def compute(self, inputs: List[bytes]) -> bytes:
-        assert len(inputs) == self.num_parties
-        
-        # Distribute shares of inputs
-        shares = await asyncio.gather(*[self._share_input(i, inputs[i]) for i in range(self.num_parties)])
+        self.cluster_size = self.config['cluster_size']
+        self.image_name = self.config['image_name']
+        self.container_port = self.config['container_port']
 
-        # Collect and reconstruct the result
-        result = await self._reconstruct_result(shares)
-        return result
+    def deploy_containers(self):
+        logger.info('Deploying containers...')
+        for i in range(self.cluster_size):
+            container_name = f'dao-node-{i+1}'
+            subprocess.run(['docker', 'run', '-d', '--name', container_name, '-p', f'{self.container_port+i}:8080', self.image_name], check=True)
+            logger.info(f'Container {container_name} deployed')
 
-    async def _share_input(self, party_id: int, input_data: bytes) -> List[Tuple[int, bytes]]:
-        shares = []
-        for i in range(self.num_parties):
-            if i == party_id:
-                continue
-            share = self.public_keys[i].encrypt(input_data, rsa.OAEP(
-                mgf=rsa.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            ))
-            shares.append((i, share))
-        return shares
+    def scale_cluster(self, new_size):
+        logger.info(f'Scaling cluster to {new_size} nodes...')
+        current_size = self.cluster_size
+        if new_size > current_size:
+            for i in range(current_size, new_size):
+                container_name = f'dao-node-{i+1}'
+                subprocess.run(['docker', 'run', '-d', '--name', container_name, '-p', f'{self.container_port+i}:8080', self.image_name], check=True)
+                logger.info(f'Container {container_name} deployed')
+        elif new_size < current_size:
+            for i in range(new_size, current_size):
+                container_name = f'dao-node-{i+1}'
+                subprocess.run(['docker', 'stop', container_name], check=True)
+                subprocess.run(['docker', 'rm', container_name], check=True)
+                logger.info(f'Container {container_name} removed')
+        self.cluster_size = new_size
 
-    async def _reconstruct_result(self, shares: List[List[Tuple[int, bytes]]]) -> bytes:
-        result = b''
-        for i in range(self.num_parties):
-            partial_shares = [share[1] for share in shares if share[0] == i]
-            if len(partial_shares) >= self.threshold:
-                result += self.private_keys[i].decrypt(b''.join(partial_shares), rsa.OAEP(
-                    mgf=rsa.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
-                ))
-        return result
+    def monitor_and_scale(self):
+        while True:
+            # Monitoring logic here
+            time.sleep(60)
+            # Scaling logic here
+            self.scale_cluster(self.cluster_size + 1)
 
 if __name__ == '__main__':
-    smp = SecureMultiPartyComputation(num_parties=5, threshold=3)
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(smp.compute([b'input1', b'input2', b'input3', b'input4', b'input5']))
-    print(result.decode())
+    logging.basicConfig(level=logging.INFO)
+    orchestrator = DAOOrchestrator()
+    orchestrator.deploy_containers()
+    orchestrator.monitor_and_scale()
