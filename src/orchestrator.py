@@ -1,43 +1,44 @@
-import random
-import time
+import asyncio
+import hashlib
+import json
 
-class DecentralizedTaskOrchestrator:
-    def __init__(self, num_nodes):
-        self.num_nodes = num_nodes
-        self.node_states = [{'available': True, 'tasks': []} for _ in range(num_nodes)]
-        self.task_queue = []
+class DistributedConsensusOrchestrator:
+    def __init__(self, nodes):
+        self.nodes = nodes
+        self.consensus_state = {}
 
-    def submit_task(self, task):
-        self.task_queue.append(task)
-        self.allocate_tasks()
+    async def propose_action(self, action):
+        # Broadcast proposed action to all nodes
+        proposals = await asyncio.gather(*[node.receive_proposal(action) for node in self.nodes])
 
-    def allocate_tasks(self):
-        while self.task_queue:
-            task = self.task_queue.pop(0)
-            available_nodes = [node for node in self.node_states if node['available']]
-            if available_nodes:
-                chosen_node = random.choice(available_nodes)
-                chosen_node['tasks'].append(task)
-                chosen_node['available'] = False
-                print(f'Allocated task {task} to node {self.node_states.index(chosen_node)}')
-            else:
-                self.task_queue.append(task)
-                break
+        # Verify consensus on proposed action
+        if self.verify_consensus(proposals):
+            # Execute action and update consensus state
+            self.execute_action(action)
+            self.update_consensus_state(action)
+            return True
+        else:
+            return False
 
-    def run_tasks(self):
-        while True:
-            for node in self.node_states:
-                if node['tasks']:
-                    task = node['tasks'].pop(0)
-                    print(f'Running task {task} on node {self.node_states.index(node)}')
-                    time.sleep(2)  # Simulating task execution
-                    node['available'] = True
-            self.allocate_tasks()
-            time.sleep(1)
+    async def receive_proposal(self, action):
+        # Verify action proposal
+        if self.verify_action(action):
+            # Add proposal to local consensus state
+            self.consensus_state[hashlib.sha256(json.dumps(action).encode()).hexdigest()] = action
+            return True
+        else:
+            return False
 
-if __name__ == '__main__':
-    orchestrator = DecentralizedTaskOrchestrator(num_nodes=5)
-    orchestrator.submit_task('task1')
-    orchestrator.submit_task('task2')
-    orchestrator.submit_task('task3')
-    orchestrator.run_tasks()
+    def verify_consensus(self, proposals):
+        # Check if majority of nodes agree on proposed action
+        agreed_actions = set([proposal for proposal in proposals if proposal])
+        return len(agreed_actions) > len(self.nodes) // 2
+
+    def execute_action(self, action):
+        # Execute the proposed action
+        # ...
+        pass
+
+    def update_consensus_state(self, action):
+        # Update the local consensus state
+        self.consensus_state[hashlib.sha256(json.dumps(action).encode()).hexdigest()] = action
