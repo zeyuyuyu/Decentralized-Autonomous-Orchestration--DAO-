@@ -1,44 +1,118 @@
-import asyncio
-import hashlib
-import json
+import time
+import logging
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+from threading import Thread, Lock
 
-class DistributedConsensusOrchestrator:
-    def __init__(self, nodes):
-        self.nodes = nodes
-        self.consensus_state = {}
+@dataclass
+class NodeStatus:
+    node_id: str
+    healthy: bool
+    last_heartbeat: float
+    consecutive_failures: int
 
-    async def propose_action(self, action):
-        # Broadcast proposed action to all nodes
-        proposals = await asyncio.gather(*[node.receive_proposal(action) for node in self.nodes])
+class Orchestrator:
+    def __init__(self, heartbeat_interval: int = 30):
+        self.nodes: Dict[str, NodeStatus] = {}
+        self.heartbeat_interval = heartbeat_interval
+        self.recovery_threshold = 3
+        self._lock = Lock()
+        self._monitor_thread: Optional[Thread] = None
+        self._running = False
+        self.logger = logging.getLogger(__name__)
 
-        # Verify consensus on proposed action
-        if self.verify_consensus(proposals):
-            # Execute action and update consensus state
-            self.execute_action(action)
-            self.update_consensus_state(action)
+    def register_node(self, node_id: str) -> bool:
+        with self._lock:
+            if node_id in self.nodes:
+                return False
+            
+            self.nodes[node_id] = NodeStatus(
+                node_id=node_id,
+                healthy=True,
+                last_heartbeat=time.time(),
+                consecutive_failures=0
+            )
+            self.logger.info(f'Node {node_id} registered successfully')
             return True
-        else:
-            return False
 
-    async def receive_proposal(self, action):
-        # Verify action proposal
-        if self.verify_action(action):
-            # Add proposal to local consensus state
-            self.consensus_state[hashlib.sha256(json.dumps(action).encode()).hexdigest()] = action
+    def heartbeat(self, node_id: str) -> bool:
+        with self._lock:
+            if node_id not in self.nodes:
+                return False
+            
+            node = self.nodes[node_id]
+            node.last_heartbeat = time.time()
+            node.healthy = True
+            node.consecutive_failures = 0
             return True
-        else:
-            return False
 
-    def verify_consensus(self, proposals):
-        # Check if majority of nodes agree on proposed action
-        agreed_actions = set([proposal for proposal in proposals if proposal])
-        return len(agreed_actions) > len(self.nodes) // 2
+    def get_healthy_nodes(self) -> List[str]:
+        with self._lock:
+            return [
+                node_id for node_id, status in self.nodes.items()
+                if status.healthy
+            ]
 
-    def execute_action(self, action):
-        # Execute the proposed action
-        # ...
-        pass
+    def _monitor_nodes(self):
+        while self._running:
+            current_time = time.time()
+            
+            with self._lock:
+                for node_id, status in self.nodes.items():
+                    if (current_time - status.last_heartbeat) > self.heartbeat_interval:
+                        status.consecutive_failures += 1
+                        status.healthy = False
+                        
+                        if status.consecutive_failures >= self.recovery_threshold:
+                            self.logger.warning(
+                                f'Node {node_id} exceeded failure threshold. '
+                                'Initiating recovery...'
+                            )
+                            self._initiate_recovery(node_id)
+                    
+            time.sleep(self.heartbeat_interval / 2)
 
-    def update_consensus_state(self, action):
-        # Update the local consensus state
-        self.consensus_state[hashlib.sha256(json.dumps(action).encode()).hexdigest()] = action
+    def _initiate_recovery(self, node_id: str):
+        try:
+            # Implementation-specific recovery logic here
+            # Could include:
+            # 1. Restarting the node process
+            # 2. Redistributing workload
+            # 3. Notifying administrators
+            self.logger.info(f'Attempting recovery for node {node_id}')
+            
+            # Reset node status after recovery attempt
+            with self._lock:
+                if node_id in self.nodes:
+                    self.nodes[node_id].consecutive_failures = 0
+        
+        except Exception as e:
+            self.logger.error(f'Recovery failed for node {node_id}: {str(e)}')
+
+    def start_monitoring(self):
+        if self._monitor_thread is not None:
+            return
+
+        self._running = True
+        self._monitor_thread = Thread(
+            target=self._monitor_nodes,
+            daemon=True
+        )
+        self._monitor_thread.start()
+        self.logger.info('Node monitoring started')
+
+    def stop_monitoring(self):
+        self._running = False
+        if self._monitor_thread:
+            self._monitor_thread.join()
+            self._monitor_thread = None
+        self.logger.info('Node monitoring stopped')
+
+    def remove_node(self, node_id: str) -> bool:
+        with self._lock:
+            if node_id not in self.nodes:
+                return False
+            
+            del self.nodes[node_id]
+            self.logger.info(f'Node {node_id} removed')
+            return True
